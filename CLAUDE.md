@@ -45,6 +45,8 @@ CLAUDE.md
 DESIGN.md
 WORKFLOW.md
 README.md
+docs/
+  PRD.md             # 产品需求文档（目标用户、MVP 边界、验收标准、风险）
 ```
 
 ---
