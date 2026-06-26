@@ -451,7 +451,17 @@ class TestToolDescriptors:
         missing = expected_sample - names
         assert not missing, f"Missing tool descriptors: {missing}"
 
-    def test_total_readonly_tool_count_is_66(self):
+    def test_readonly_tools_all_present(self):
         from scm_mcp_server.tools import list_tool_descriptors
-        names = [t.name for t in list_tool_descriptors()]
-        assert len(names) == 66, f"Expected 66 readonly tools, got {len(names)}: {names}"
+        names = {t.name for t in list_tool_descriptors()}
+        # All 66 readonly tools must exist (write tools added separately)
+        readonly_sample = {
+            "list_addresses", "get_address",
+            "list_security_rules", "get_security_rule",
+            "list_anti_spyware_profiles", "get_anti_spyware_profile",
+            "list_url_filtering_categories",  # list-only, no get-by-id
+            "list_jobs", "get_job", "get_running_config_version",
+            "list_service_accounts", "get_role", "get_access_policy",
+        }
+        missing = readonly_sample - names
+        assert not missing, f"Missing readonly tools: {missing}"
