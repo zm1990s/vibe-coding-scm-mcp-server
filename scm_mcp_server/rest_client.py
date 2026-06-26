@@ -15,16 +15,19 @@ def request(
     *,
     params: dict | None = None,
     json: dict | None = None,
+    base: str | None = None,
 ) -> tuple[int, dict]:
     """
     发起 HTTP 请求。
 
     full_path 以 / 开头，会拼接到 base_url 后。
+    base 若传入则覆盖 config 中的 base_url（用于 IAM 等使用不同域名的 API）。
     返回 (status_code, response_body_dict)。
     网络错误转为 (0, {"error": "..."})。
     """
     cfg = load_config()
-    url = cfg["base_url"] + full_path
+    effective_base = (base or cfg["base_url"]).rstrip("/")
+    url = effective_base + full_path
     try:
         resp = httpx.request(
             method.upper(),
@@ -37,7 +40,7 @@ def request(
     except httpx.TimeoutException:
         return 0, {"error": f"Request timeout after {_TIMEOUT}s: {method} {full_path}"}
     except httpx.ConnectError as exc:
-        return 0, {"error": f"Cannot connect to {cfg['base_url']}: {exc}"}
+        return 0, {"error": f"Cannot connect to {effective_base}: {exc}"}
     except httpx.HTTPError as exc:
         return 0, {"error": f"HTTP error: {exc}"}
 
