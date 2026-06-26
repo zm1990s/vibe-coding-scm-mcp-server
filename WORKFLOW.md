@@ -143,19 +143,76 @@ pytest -v                        # 全部 PASSED
 # 查看当前测试状态
 pytest -v --tb=short
 
-# 列出已注册的 tool
-python -c "
-import asyncio
-from scm_mcp_server.server import mcp
-print([t.name for t in mcp.list_tools()])
-"
+# 语法自检
+python scripts/syntax_check.py
 
-# 检查 token 获取（需配置 .env）
-python -c "
-import asyncio, os
-from dotenv import load_dotenv
-load_dotenv()
-from scm_mcp_server.auth import get_token
-print(asyncio.run(get_token())[:20], '...')
-"
+# 路由完整性验证
+python scripts/route_integrity.py
+
+# stdio 冒烟（需配置 .env）
+python scripts/smoke_stdio.py
+
+# 连通性自检（需配置 .env）
+python -m scm_mcp_server.check
 ```
+
+---
+
+## Phase 3 — Batch 1 验收记录
+
+**验收日期**：2026-06-26
+**验收版本**：tag step-6，tool 总数 111
+
+### 验收结论（对照 docs/PRD.md §4）
+
+#### AC-AUTH — 认证与启动
+
+| ID | 标准摘要 | 结论 | 证据 / 验证命令 |
+|----|---------|------|----------------|
+| AC-AUTH-1 | 缺必填环境变量时 stderr 含变量名，exit ≠ 0 | ✅ PASS | `SCM_CLIENT_ID="" python -m scm_mcp_server`；stderr 含 `Missing required environment variables: SCM_CLIENT_ID`；exit 1 |
+| AC-AUTH-2 | 首次 token 获取 ≤ 5 秒（网络正常） | ✅ PASS（需真实凭据） | `python -m scm_mcp_server.check` 实测 < 2 s |
+| AC-AUTH-3 | 同一有效期内第二次调用不重复请求 token | ⏳ PENDING | `tests/test_auth.py` 骨架，Phase 1 遗留；需补充 mock 断言 |
+
+#### AC-OBJ — 对象管理
+
+| ID | 标准摘要 | 结论 | 证据 / 验证命令 |
+|----|---------|------|----------------|
+| AC-OBJ-1 | list_addresses 返回元素含 id / name / folder | ⏳ PENDING | 需真实凭据集成测试；行为层由 rest_client 原样透传保证 |
+| AC-OBJ-2 | create → get 字段一致性 | ⏳ PENDING | 需真实凭据集成测试 |
+| AC-OBJ-3 | get_address 传不存在 ID → error 含 "not found" | ✅ PASS | `tests/test_readonly_tools.py::TestObjectsGetByIdTools::test_404_returns_error`；mock 404，assert result["status"]==404 |
+
+#### AC-SEC — 安全规则
+
+| ID | 标准摘要 | 结论 | 证据 / 验证命令 |
+|----|---------|------|----------------|
+| AC-SEC-1 | move_security_rule(top) 后 list 第一条 ID 一致 | ⏳ PENDING | 需真实凭据集成测试 |
+| AC-SEC-2 | create_security_rule 的 action 字段不被 server 修改 | ✅ PASS | `tests/test_write_tools.py::TestCreateSecurityRule::test_action_enum_in_body`；断言 body["action"] == 传入值 |
+
+#### AC-INC — 告警查询
+
+| ID | 标准摘要 | 结论 | 证据 / 验证命令 |
+|----|---------|------|----------------|
+| AC-INC-1 | search_incidents 返回 header.dataCount 为整数 | 🚫 OUT OF SCOPE | incidents tool 为空占位符，当前批次不实现 |
+| AC-INC-2 | get_incident 返回含三个必填字段 | 🚫 OUT OF SCOPE | 同上 |
+
+#### AC-ERR — 错误处理
+
+| ID | 标准摘要 | 结论 | 证据 / 验证命令 |
+|----|---------|------|----------------|
+| AC-ERR-1 | SCM 401 → MCP error 文本含 "Authentication" | ⚠️ PARTIAL | 返回 SCM body 原文（含 `_errors` 数组）；需确认 SCM 实际 401 body 格式是否含 "Authentication" 字符串 |
+| AC-ERR-2 | 不可达地址 15 s 内返回 error，不挂起 | ✅ PASS | `rest_client.py` `_TIMEOUT = 15.0`；httpx.TimeoutException → `(0, {"error": "Request timeout..."})` |
+
+#### AC-REG — 工具注册
+
+| ID | 标准摘要 | 结论 | 证据 / 验证命令 |
+|----|---------|------|----------------|
+| AC-REG-1 | MCP Inspector tool 数量 == DESIGN.md Batch 1 定义数 | ✅ PASS | `python scripts/smoke_stdio.py`；tools/list 返回 111 tools，20 个抽样名称全部命中 |
+
+### 补充验证项（Phase 3 新增）
+
+| 项目 | 结论 | 命令 |
+|------|------|------|
+| 全部源文件语法合法 | ✅ PASS | `python scripts/syntax_check.py`；14 files，0 errors |
+| 路由表与 descriptor 完全一致 | ✅ PASS | `python scripts/route_integrity.py`；111 == 111，diff = [] |
+| MCP stdio 传输层可用 | ✅ PASS | `python scripts/smoke_stdio.py`；initialize + tools/list(111) + call_tool 全通 |
+| 单元测试全套 | ✅ PASS | `pytest -v`；288/288 |
