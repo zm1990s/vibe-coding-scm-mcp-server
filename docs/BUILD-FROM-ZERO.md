@@ -9,7 +9,7 @@
 
 ### 这是什么
 
-一个 **MCP server**：把 Palo Alto Networks Strata Cloud Manager（SCM）已有的 REST API，封装成一组 MCP tools，供 Claude Desktop / Cursor 等 MCP 客户端通过自然语言调用。它**不是**新平台——只做「刷 token → 组装请求 → 调 SCM REST → 透传响应」。
+一个 **MCP server**：把 Palo Alto Networks Strata Cloud Manager（SCM）已有的 REST API，封装成一组 MCP tools，供 Claude CLI / Cursor 等 MCP 客户端通过自然语言调用。它**不是**新平台——只做「刷 token → 组装请求 → 调 SCM REST → 透传响应」。
 
 ### 最终成果
 
@@ -22,7 +22,7 @@
 
 | 项 | 选定 |
 | --- | --- |
-| 语言 | Python 3.10+ |
+| 语言 | Python 3.11+ |
 | MCP | 官方 `mcp` SDK |
 | 传输 | stdio（唯一） |
 | HTTP | `httpx` |
@@ -44,7 +44,81 @@
 
 ---
 
-## 2. 逐步轨迹
+## 2. 前置条件：下载 OpenAPI 规范文件
+
+> **必须在 Step 0 之前完成。** 后续所有步骤的 schema 来源都依赖这些文件；若缺失，AI 无法从 YAML 现查字段定义，只能靠"印象"臆造，导致代码跑不通。
+
+### 为什么需要这一步
+
+本项目的 `openapi-specs` 是一个软链接，指向同级目录 `../pan.dev/openapi-specs/`。原始文件托管在 PAN 官方 GitHub 仓库：
+
+> **[https://github.com/PaloAltoNetworks/pan.dev/tree/master/openapi-specs](https://github.com/PaloAltoNetworks/pan.dev/tree/master/openapi-specs)**
+
+pan.dev 仓库体积较大（含大量文档站资产），**推荐用 sparse checkout 只下载 `openapi-specs/` 子目录**，约 20–30 MB，完整克隆约 1 GB+。
+
+### 下载步骤（sparse checkout，推荐）
+
+```bash
+# 1. 在项目的上级目录操作（与 vibecoding-mcp-server/ 并列）
+cd /path/to/AI   # 替换为你自己的路径，例如 ~/projects
+
+# 2. 初始化 sparse clone（只拉元数据，不拉文件内容）
+git clone --filter=blob:none --sparse \
+  https://github.com/PaloAltoNetworks/pan.dev.git
+
+# 3. 进入仓库，指定只检出 openapi-specs/ 目录
+cd pan.dev
+git sparse-checkout set openapi-specs
+
+# 4. 验证关键文件存在
+ls openapi-specs/scm/config/sase/objects/
+ls openapi-specs/scm/config/sase/security/
+ls openapi-specs/scm/iam/
+```
+
+完成后目录结构应为：
+
+```
+AI/                              ← 你的工作目录
+├── pan.dev/
+│   └── openapi-specs/
+│       └── scm/
+│           ├── auth/AuthService.yaml
+│           ├── config/sase/objects/objects-june.yaml
+│           ├── config/sase/security/security-services-R2-2026.yaml
+│           ├── config/sase/operations/config-operations-march.yaml
+│           └── iam/ServiceAccounts.yaml  Roles.yaml  AccessPolicies.yaml
+└── vibecoding-mcp-server/
+    └── openapi-specs -> ../pan.dev/openapi-specs  ← 软链接（已建好）
+```
+
+软链接 `openapi-specs` 在仓库中已建好，pan.dev 放到正确位置后会自动生效，无需手动操作。
+
+### 验证软链接是否正常
+
+```bash
+cd vibecoding-mcp-server
+ls -la openapi-specs        # 应显示 -> ../pan.dev/openapi-specs
+ls openapi-specs/scm/       # 应能列出 auth/ config/ iam/ 等子目录
+```
+
+如果 `ls openapi-specs/scm/` 报错，说明 pan.dev 的位置不对——检查它是否与 `vibecoding-mcp-server/` 在同一个父目录下。
+
+### 如果不想用软链接
+
+也可以直接把 openapi-specs 内容放进项目目录：
+
+```bash
+# 在项目根目录执行
+rm openapi-specs                          # 删掉软链接
+cp -r ../pan.dev/openapi-specs ./openapi-specs   # 复制实体目录
+```
+
+复制后记得在 `.gitignore` 里加上 `openapi-specs/`，避免把几十 MB 的 YAML 推进仓库。
+
+---
+
+## 3. 逐步轨迹
 
 > 每节：**真实提示词（逐字，可直接复制）** → 关键决策/教学点 → 验收 → **commit / tag / push**。
 > ⚠️ 下面的提示词是构建时**原样使用**的——红线约束、⚠️ 副作用提醒、"先给计划我确认"的 gating 一字未删。
@@ -80,82 +154,9 @@ Tag 命名约定：
 | Step 5 | `step-5` | 特殊操作 tool（move_* / push_* / 有独特 body 的写操作）+ Batch 1 收口 |
 | Step 5b | `step-5b` | Batch 2 扩展 tool（Objects 扩展 + Security 档案类写操作）|
 | Step 6 | `step-6` | 阶段 3 收口 + 冒烟 |
+| Step 7 | `step-7` | 注册到 Claude CLI + 端到端调用验证 |
 
 检出任意历史节点：`git checkout step-N`
-
----
-
-### 前置准备 — 获取 OpenAPI 规范文件
-
-在开始任何 Step 之前，必须先将 Palo Alto Networks 的 OpenAPI 规范文件下载到本地。这些 YAML 文件是 Step 3 填写 DESIGN 映射表、以及所有 tool `inputSchema` 的**唯一权威来源**，缺少它们 AI 将无法正确提取字段定义，只能靠臆造——这正是本项目明确禁止的。
-
-**规范文件来源**：[github.com/PaloAltoNetworks/pan.dev — openapi-specs/](https://github.com/PaloAltoNetworks/pan.dev/tree/master/openapi-specs)
-
-#### 方式一：Sparse Checkout（推荐，仅拉取所需子目录）
-
-pan.dev 完整仓库体积较大（含文档站资源），建议只拉取 `openapi-specs/` 目录：
-
-```bash
-# 在项目目录的**同级目录**下执行（目标路径：../pan.dev）
-cd ..   # 退到项目的父目录
-
-git clone --no-checkout --filter=blob:none \
-  https://github.com/PaloAltoNetworks/pan.dev.git
-
-cd pan.dev
-git sparse-checkout init --cone
-git sparse-checkout set openapi-specs
-git checkout master
-```
-
-#### 方式二：完整 Clone（网络较好时）
-
-```bash
-cd ..   # 退到项目的父目录
-git clone https://github.com/PaloAltoNetworks/pan.dev.git
-```
-
-#### 建立软链接
-
-两种方式任选其一完成后，回到**项目根目录**建立软链接，让项目代码通过统一路径访问规范文件：
-
-```bash
-cd <your-project-dir>   # 回到本仓库根目录
-ln -s ../pan.dev/openapi-specs openapi-specs
-```
-
-验证软链接已正确建立：
-
-```bash
-ls openapi-specs/scm/
-# 应能看到 auth/  config/  iam/ 等子目录
-```
-
-**目录结构（预期）**：
-
-```
-<工作区根目录>/
-├── pan.dev/
-│   └── openapi-specs/
-│       └── scm/
-│           ├── auth/
-│           │   └── AuthService.yaml
-│           ├── config/
-│           │   └── sase/
-│           │       ├── objects/objects-june.yaml
-│           │       ├── security/security-services-R2-2026.yaml
-│           │       └── operations/config-operations-march.yaml
-│           └── iam/
-│               ├── ServiceAccounts.yaml
-│               ├── Roles.yaml
-│               └── AccessPolicies.yaml
-└── <your-project-dir>/          ← 本仓库
-    └── openapi-specs -> ../pan.dev/openapi-specs   （软链接）
-```
-
-> ⚠️ `openapi-specs/` 下的任何文件**只读，禁止修改**。Step 3 中 AI 只读取这些文件提取字段，不改动其内容。
-
-完成上述准备后，再进入 Step 0。
 
 ---
 
@@ -172,7 +173,7 @@ ls openapi-specs/scm/
 a. CLAUDE.md — L1 工程契约（项目身份、技术栈不要换、目录约定、禁止事项、必须执行）
 b. DESIGN.md — L2 设计（暴露哪些 MCP tool，各自包哪个 REST 端点，入参/出参）
 c. WORKFLOW.md — L3 阶段协议
-d. README.md — 给人看：怎么跑、怎么在 Claude/Cursor 里注册
+d. README.md — 给人看：怎么跑、怎么在 Claude CLI / Cursor 里注册
 
 技术栈（请在 CLAUDE.md 钉死）：Python，官方 mcp SDK，stdio 传输，httpx HTTP 客户端。
 
@@ -244,12 +245,12 @@ git tag step-1 && git push origin scm && git push origin step-1
   - check.py：连通性自检（获取 token + 调一次 GET /config/operations/v1/jobs），退出码 0/1
 - 不要生成任何具体 tool。tool↔端点映射当前为 _TBD_，其填充是 WORKFLOW.md 阶段 1 的第一步。
 
-验收命令需可实际运行：pip install -e .、python -m scm_mcp.check（配好凭据后）、stdio 启动不报错、tools/list 返回空列表。
+验收命令需可实际运行：pip install -e .、python -m scm_mcp_server.check（配好凭据后）、stdio 启动不报错、tools/list 返回空列表。
 ```
 
 **教学点**：骨架先于 tool。`auth.py` 独立成模块是 SCM 与日志分析版的最大区别——OAuth2 刷新逻辑有状态（缓存 + 锁），不应混进 rest_client。`check.py` 的自检分两步：先拿 token（验证凭据），再调 API（验证权限），两步分开报错让故障更易定位。
 
-**验收**：`pip install -e .` 通过；`python -m scm_mcp.check` 在凭据正确时输出 `OK`；`tools/list` 返回 `[]`。
+**验收**：`pip install -e .` 通过；`python -m scm_mcp_server.check` 在凭据正确时输出 `OK`；`tools/list` 返回 `[]`。
 
 **提交**：
 ```bash
@@ -434,10 +435,10 @@ git tag step-5b && git push origin scm-from-zero && git push origin step-5b
 ```
 执行 WORKFLOW.md 阶段 3：验收收口。先不扩新端点，把当前批次收口。先给计划我确认。
 
-1. 语法自检：写一个内联脚本，对 src/scm_mcp/ 下全部 .py 文件跑 ast.parse，全通才算过。
+1. 语法自检：写一个内联脚本，对 scm_mcp_server/ 下全部 .py 文件跑 ast.parse，全通才算过。
 2. 路由完整性验证：断言 TOOLS 列表中的 tool 名称集合 == 全部路由表的 key 合集，无遗漏、无多余。
 3. stdio 冒烟（scripts/smoke_stdio.py）：用官方 mcp SDK 的 client over stdio 驱动本 server，跑完整握手：initialize → tools/list（断言 tool 数量与 DESIGN.md 一致，名称集合完全匹配）→ call_tool(list_jobs, {limit:1})，打印返回。证明它作为真实 MCP server 在传输层可用，而非只是直调 tools.call()。
-4. 更新 README：补当前所有 tool 的分类列表；给出 Claude Desktop / Cursor 的注册 JSON（command/args/env=SCM_*/）；加"连通性自检"一节。
+4. 更新 README：补当前所有 tool 的分类列表；给出 Claude CLI / Cursor 的注册方式（command/args/env=SCM_*/）；加"连通性自检"一节。
 5. 更新 WORKFLOW.md 验收记录：对照 docs/PRD.md §4 的 A1–A7 逐条标注结论 + 验证命令/证据。
 
 约束：不新增 tool；不改已有 tool 行为；docs/ 相关文件一并检查是否需要同步更新。
@@ -456,7 +457,57 @@ git tag step-6 && git push origin scm && git push origin step-6
 
 ---
 
-## 3. SCM API 端点覆盖盘点
+### Step 7 — 注册到 Claude 并做真实调用测试
+
+**目标**：把 MCP server 接入 Claude，用自然语言完成一次端到端的真实 SCM 调用，确认整条链路（Claude → stdio → scm_mcp_server → SCM REST API）打通。
+
+#### 7.1 用自然语言让 Claude 安装 MCP
+
+你已经在用 Claude CLI 写这个项目了，直接在对话框里说：
+
+```
+帮我把当前目录下的 scm_mcp_server 注册为 MCP server，
+命令是 python -m scm_mcp_server，
+环境变量：
+  SCM_CLIENT_ID=<你的 client id>
+  SCM_CLIENT_SECRET=<你的 secret>
+  SCM_TSG_ID=<你的 tsg id>
+```
+
+Claude 会自动修改配置文件并完成注册，无需手动编辑 JSON。
+
+#### 7.2 重启 Claude 使配置生效
+
+注册完成后，**完全退出再重新打开 Claude**（不能只关窗口）。重启后新的 MCP server 才会加载。
+
+#### 7.3 调用测试（建议顺序）
+
+重启后在新对话里依次测试：
+
+```
+用 scm MCP 列出 Prisma Access 文件夹下的前 5 个地址对象
+```
+预期：调用 `list_addresses`，返回地址列表，无报错。
+
+```
+查询 SCM 最近的配置推送任务状态
+```
+预期：调用 `list_jobs`，返回 job 列表和各任务状态。
+
+```
+在 Prisma Access 文件夹下创建一个测试地址对象，名称 test-from-mcp，ip_netmask 为 192.0.2.1/32
+```
+预期：调用 `create_address`，返回新对象 ID；可在 SCM 控制台确认对象已存在。
+
+**提交**：
+```bash
+git add -A && git commit -m "step-7: 注册到 Claude，端到端调用验证通过"
+git tag step-7 && git push origin scm-from-zero && git push origin step-7
+```
+
+---
+
+## 4. SCM API 端点覆盖盘点
 
 ### Batch 1（MVP，随 Step 4–5 实现）
 
@@ -484,29 +535,38 @@ git tag step-6 && git push origin scm && git push origin step-6
 
 ---
 
-## 4. 学生如何跟做
+## 5. 学生如何跟做
 
 ### 方式 A：对照已完成的仓库（最快）
 
 ```bash
-git clone <repo>
-cd vibecoding-mcp-server
-git checkout scm
+# 0. 先下载 OpenAPI 规范（见 §2 前置条件）
+#    确保 pan.dev/ 和 vibecoding-mcp-server/ 在同一父目录下
 
-# 配置凭据
+# 1. 克隆项目
+git clone https://github.com/zm1990s/vibecoding-mcp-server.git
+cd vibecoding-mcp-server
+git checkout scm-from-zero
+
+# 2. 验证软链接
+ls openapi-specs/scm/   # 能列出子目录说明 pan.dev 位置正确
+
+# 3. 配置凭据
 cp .env.example .env
 # 编辑 .env 填入 SCM_CLIENT_ID / SCM_CLIENT_SECRET / SCM_TSG_ID
 
-# 安装并自检
+# 4. 安装并自检
 pip install -e .
 export $(cat .env | grep -v '^#' | xargs)
-python -m scm_mcp.check
+python -m scm_mcp_server.check
 
-# 冒烟测试
+# 5. 冒烟测试
 python scripts/smoke_stdio.py
 ```
 
 ### 方式 B：用上面的提示词从零复现
+
+> 先完成 §2 前置条件（下载 OpenAPI 规范），再按步骤执行。
 
 按 Step 0 → Step 6 顺序，把每节"真实提示词"原样发给 Claude Code（或 Cursor），对照教学点和验收标准确认每步结果。
 
@@ -517,7 +577,7 @@ python scripts/smoke_stdio.py
 
 ---
 
-## 5. 常见问题
+## 6. 常见问题
 
 | 问题 | 原因 | 解决 |
 | --- | --- | --- |
@@ -527,3 +587,6 @@ python scripts/smoke_stdio.py
 | `HTTP 400` on list | folder/snippet/device 参数缺失 | SCM 列表 API 要求至少提供一个容器参数 |
 | tool 在 MCP 客户端不出现 | 会话未重启 | 关闭重开会话；确认 `scm-mcp` 已在 MCP 配置中注册 |
 | `push_candidate_config` 返回 409 | 有其他 job 正在运行 | 先用 `list_jobs` 确认无 pending/running job 再推送 |
+| `ls openapi-specs/scm/` 报错或为空 | pan.dev 目录位置不对，软链接失效 | 确认 `pan.dev/` 与 `vibecoding-mcp-server/` 在同一父目录；或按 §2「不想用软链接」方案把 openapi-specs 复制到项目内 |
+| sparse checkout 后 YAML 文件不存在 | sparse-checkout 路径未设置正确 | 在 pan.dev 目录执行 `git sparse-checkout set openapi-specs` 再 `git checkout` |
+

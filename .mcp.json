@@ -1,0 +1,14 @@
+{
+  "mcpServers": {
+    "scm": {
+      "command": "python",
+      "args": ["-m", "scm_mcp_server"],
+      "cwd": "/path/to/vibecoding-mcp-server",
+      "env": {
+        "SCM_CLIENT_ID": "your-client-id@<tsg-id>.iam.panserviceaccount.com",
+        "SCM_CLIENT_SECRET": "your-client-secret",
+        "SCM_TSG_ID": "your-tsg-id"
+      }
+    }
+  }
+}
