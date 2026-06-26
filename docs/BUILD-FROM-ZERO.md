@@ -85,6 +85,80 @@ Tag 命名约定：
 
 ---
 
+### 前置准备 — 获取 OpenAPI 规范文件
+
+在开始任何 Step 之前，必须先将 Palo Alto Networks 的 OpenAPI 规范文件下载到本地。这些 YAML 文件是 Step 3 填写 DESIGN 映射表、以及所有 tool `inputSchema` 的**唯一权威来源**，缺少它们 AI 将无法正确提取字段定义，只能靠臆造——这正是本项目明确禁止的。
+
+**规范文件来源**：[github.com/PaloAltoNetworks/pan.dev — openapi-specs/](https://github.com/PaloAltoNetworks/pan.dev/tree/master/openapi-specs)
+
+#### 方式一：Sparse Checkout（推荐，仅拉取所需子目录）
+
+pan.dev 完整仓库体积较大（含文档站资源），建议只拉取 `openapi-specs/` 目录：
+
+```bash
+# 在项目目录的**同级目录**下执行（目标路径：../pan.dev）
+cd ..   # 退到项目的父目录
+
+git clone --no-checkout --filter=blob:none \
+  https://github.com/PaloAltoNetworks/pan.dev.git
+
+cd pan.dev
+git sparse-checkout init --cone
+git sparse-checkout set openapi-specs
+git checkout master
+```
+
+#### 方式二：完整 Clone（网络较好时）
+
+```bash
+cd ..   # 退到项目的父目录
+git clone https://github.com/PaloAltoNetworks/pan.dev.git
+```
+
+#### 建立软链接
+
+两种方式任选其一完成后，回到**项目根目录**建立软链接，让项目代码通过统一路径访问规范文件：
+
+```bash
+cd <your-project-dir>   # 回到本仓库根目录
+ln -s ../pan.dev/openapi-specs openapi-specs
+```
+
+验证软链接已正确建立：
+
+```bash
+ls openapi-specs/scm/
+# 应能看到 auth/  config/  iam/ 等子目录
+```
+
+**目录结构（预期）**：
+
+```
+<工作区根目录>/
+├── pan.dev/
+│   └── openapi-specs/
+│       └── scm/
+│           ├── auth/
+│           │   └── AuthService.yaml
+│           ├── config/
+│           │   └── sase/
+│           │       ├── objects/objects-june.yaml
+│           │       ├── security/security-services-R2-2026.yaml
+│           │       └── operations/config-operations-march.yaml
+│           └── iam/
+│               ├── ServiceAccounts.yaml
+│               ├── Roles.yaml
+│               └── AccessPolicies.yaml
+└── <your-project-dir>/          ← 本仓库
+    └── openapi-specs -> ../pan.dev/openapi-specs   （软链接）
+```
+
+> ⚠️ `openapi-specs/` 下的任何文件**只读，禁止修改**。Step 3 中 AI 只读取这些文件提取字段，不改动其内容。
+
+完成上述准备后，再进入 Step 0。
+
+---
+
 ### Step 0 — Context Stack 契约
 
 **真实提示词（逐字）**：
