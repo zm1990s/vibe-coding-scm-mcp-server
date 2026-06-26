@@ -36,7 +36,6 @@ def _mock_req(status: int, body: dict):
 
 def _assert_path_contains(mock_obj, fragment: str):
     """Assert the path argument (positional arg 1) contains fragment."""
-    _, pos, _ = mock_obj.call_args if mock_obj.call_args else (None, None, None)
     args = mock_obj.call_args.args
     assert fragment in args[1], f"Expected '{fragment}' in path '{args[1]}'"
 
@@ -173,8 +172,8 @@ class TestSecurityRulesListTools:
         _assert_path_contains(m, path_fragment)
 
     @pytest.mark.parametrize("tool", [
-        "list_security_rules", "list_decryption_rules",
-        "list_app_override_rules", "list_dos_protection_rules",
+        "list_security_rules", "list_decryption_rules", "list_app_override_rules",
+        # list_dos_protection_rules uses _CONTAINER_LIST_PARAMS (no position field)
     ])
     def test_position_param_optional(self, tool):
         # position is optional; should be passed when provided, omitted when not

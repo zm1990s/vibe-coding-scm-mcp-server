@@ -15,8 +15,7 @@ app = Server("scm-mcp-server")
 
 @app.list_tools()
 async def list_tools() -> list[types.Tool]:
-    # TODO: Phase 3 — return registered tool descriptors
-    return []
+    return tools.list_tool_descriptors()
 
 
 @app.call_tool()
