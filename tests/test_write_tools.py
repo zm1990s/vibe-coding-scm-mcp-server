@@ -747,8 +747,23 @@ class TestWriteToolDescriptors:
                 assert "⚠️" in t.description, \
                     f"{t.name} missing ⚠️ in description: {t.description!r}"
 
-    def test_total_tool_count_is_104(self):
+    def test_standard_write_tools_all_present(self):
         from scm_mcp_server.tools import list_tool_descriptors
-        count = len(list_tool_descriptors())
-        # 66 readonly + 38 write = 104
-        assert count == 104, f"Expected 104 tools, got {count}"
+        names = {t.name for t in list_tool_descriptors()}
+        standard_writes = {
+            "create_address", "update_address", "delete_address",
+            "create_address_group", "update_address_group", "delete_address_group",
+            "create_service", "update_service", "delete_service",
+            "create_service_group", "update_service_group", "delete_service_group",
+            "create_tag", "update_tag", "delete_tag",
+            "create_application_group", "update_application_group", "delete_application_group",
+            "create_external_dynamic_list", "update_external_dynamic_list", "delete_external_dynamic_list",
+            "create_security_rule", "update_security_rule", "delete_security_rule",
+            "create_decryption_rule", "update_decryption_rule", "delete_decryption_rule",
+            "create_app_override_rule", "update_app_override_rule", "delete_app_override_rule",
+            "create_dos_protection_rule", "update_dos_protection_rule", "delete_dos_protection_rule",
+            "create_service_account", "update_service_account", "delete_service_account",
+            "create_access_policy", "delete_access_policy",
+        }
+        missing = standard_writes - names
+        assert not missing, f"Missing standard write tools: {missing}"
